@@ -33,8 +33,9 @@ ENV/
 *.swo
 *~
 
-# Logs
-logs/
+# Logs (忽略日志文件，但保留目录结构)
+logs/*
+!logs/.gitkeep
 *.log
 
 # Configuration (注意：config.ini 包含敏感信息，不上传git)
