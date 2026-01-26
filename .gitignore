@@ -49,3 +49,8 @@ Thumbs.db
 *.backup
 *_backup.py
 
+# 不上传git的目录和文件
+.specstory/
+backup_v5/
+.cursorindexingignore
+
