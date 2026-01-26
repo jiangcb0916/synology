@@ -173,15 +173,18 @@ class CardCallbackHandler:
                 
                 return {"status": "FAIL", "message": "权限不足"}
             
+            # 获取操作者姓名
+            operator_name = self.user_service.get_user_name_by_id(operator_user_id) if operator_user_id else self.admin_name
+            
             # 判断用户操作
             if user_action in ['approve', '同意', 'agree', 'confirm', 'accept', '通过']:
                 return await self._handle_approve(
                     name, target_user_id, sender_staff_id, 
-                    open_conversation_id, is_group_message, out_track_id
+                    open_conversation_id, is_group_message, out_track_id, operator_name
                 )
             elif user_action in ['reject', '拒绝', 'deny', 'cancel']:
                 return await self._handle_reject(
-                    name, target_user_id, out_track_id
+                    name, target_user_id, out_track_id, operator_name
                 )
             else:
                 logger.warning(f"未知的操作类型: {user_action}")
@@ -282,7 +285,8 @@ class CardCallbackHandler:
         sender_staff_id: str,
         open_conversation_id: Optional[str],
         is_group_message: bool,
-        out_track_id: str
+        out_track_id: str,
+        operator_name: Optional[str] = None
     ) -> Dict:
         """处理审批通过
         
@@ -293,6 +297,7 @@ class CardCallbackHandler:
             open_conversation_id: 会话 ID
             is_group_message: 是否群消息
             out_track_id: 卡片追踪 ID
+            operator_name: 操作者姓名
             
         Returns:
             处理结果字典
@@ -301,6 +306,9 @@ class CardCallbackHandler:
         ok, username, password, error_msg = self.synology_service.create_user_from_name(name)
         
         if ok:
+            # 更新卡片状态为"已同意"
+            self.card_service.update_card_status(out_track_id, "已同意", operator_name)
+            
             # 创建成功
             reply_content = MessageFormatter.format_success_message(name, username, password)
             self.message_service.send_private_markdown(target_user_id, None, "帐户开通完成通知", reply_content)
@@ -324,6 +332,9 @@ class CardCallbackHandler:
             
             return {"status": "SUCCESS"}
         else:
+            # 创建失败，但审批已通过，所以更新状态为"已同意（创建失败）"
+            self.card_service.update_card_status(out_track_id, "已同意（创建失败）", operator_name)
+            
             # 创建失败
             logger.error(f"创建用户失败: {error_msg}")
             
@@ -353,7 +364,8 @@ class CardCallbackHandler:
         self,
         name: str,
         target_user_id: str,
-        out_track_id: str
+        out_track_id: str,
+        operator_name: Optional[str] = None
     ) -> Dict:
         """处理审批拒绝
         
@@ -361,10 +373,14 @@ class CardCallbackHandler:
             name: 用户姓名
             target_user_id: 目标用户 ID
             out_track_id: 卡片追踪 ID
+            operator_name: 操作者姓名
             
         Returns:
             处理结果字典
         """
+        # 更新卡片状态为"已拒绝"
+        self.card_service.update_card_status(out_track_id, "已拒绝", operator_name)
+        
         # 只发送拒绝通知给目标用户
         reject_content = MessageFormatter.format_approval_reject_message(name)
         self.message_service.send_private_markdown(target_user_id, None, "审批结果通知", reject_content)
