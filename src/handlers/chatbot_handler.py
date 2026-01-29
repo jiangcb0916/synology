@@ -311,13 +311,21 @@ class ChatbotHandler(BaseChatbotHandler):
             
             # 如果配置了卡片模板 ID，发送审批卡片；否则直接创建用户
             if self.settings.dingtalk_card_template_id:
+                # 卡片发送给管理员，而不是新用户
+                if not self.admin_userid:
+                    logger.error("管理员 userid 未初始化，无法发送审批卡片")
+                    self._send_messages(sender_staff_id, open_conversation_id, is_group_message, 
+                                       "系统错误", "**系统错误**\n\n管理员信息未配置，无法发送审批卡片")
+                    return AckMessage.STATUS_OK, 'OK'
+                
                 card_sent = self.card_service.send_approval_card(
                     name=name,
                     target_user_id=target_user_id,
                     sender_staff_id=sender_staff_id,
                     open_conversation_id=open_conversation_id,
                     is_group_message=is_group_message,
-                    admin_name=self.admin_name
+                    admin_name=self.admin_name,
+                    admin_user_id=self.admin_userid
                 )
                 if not card_sent:
                     logger.error("发送审批卡片失败，回退到直接创建用户")
