@@ -93,7 +93,9 @@ class DingTalkBotApp:
                 message_service=self.message_service,
                 card_service=self.card_service,
                 admin_name=self.settings.admin_name,
-                admin_userid=chatbot_handler.admin_userid
+                admin_userid=chatbot_handler.admin_userid,
+                approver_name=self.settings.approver_name,
+                approver_userid=chatbot_handler.approver_userid
             )
             
             try:
@@ -117,6 +119,7 @@ class DingTalkBotApp:
             else:
                 logger.warning("卡片模板ID未配置，将使用直接创建用户方式")
             logger.info(f"管理员: {self.settings.admin_name}")
+            logger.info(f"审批人: {self.settings.approver_name}")
             logger.info("=" * 60)
             
             print("\n" + "=" * 60)

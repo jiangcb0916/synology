@@ -57,6 +57,11 @@ class ChatbotHandler(BaseChatbotHandler):
         self.admin_name = settings.admin_name
         self.admin_userid: Optional[str] = None
         self._init_admin_userid()
+        
+        # 审批人配置
+        self.approver_name = settings.approver_name
+        self.approver_userid: Optional[str] = None
+        self._init_approver_userid()
     
     def _init_admin_userid(self):
         """初始化管理员 userid"""
@@ -68,6 +73,17 @@ class ChatbotHandler(BaseChatbotHandler):
                 logger.warning(f"未找到管理员用户: {self.admin_name}，权限检查将失效")
         except Exception as e:
             logger.error(f"初始化管理员 userid 失败: {e}", exc_info=True)
+    
+    def _init_approver_userid(self):
+        """初始化审批人 userid"""
+        try:
+            self.approver_userid = self.user_service.find_user_by_name(self.approver_name)
+            if self.approver_userid:
+                logger.info(f"审批人 {self.approver_name} 的 userid: {self.approver_userid}")
+            else:
+                logger.warning(f"未找到审批人用户: {self.approver_name}，审批卡片将无法发送")
+        except Exception as e:
+            logger.error(f"初始化审批人 userid 失败: {e}", exc_info=True)
     
     def _check_admin_permission(self, sender_staff_id: str) -> bool:
         """检查发送者是否有管理员权限
@@ -311,11 +327,11 @@ class ChatbotHandler(BaseChatbotHandler):
             
             # 如果配置了卡片模板 ID，发送审批卡片；否则直接创建用户
             if self.settings.dingtalk_card_template_id:
-                # 卡片发送给管理员，而不是新用户
-                if not self.admin_userid:
-                    logger.error("管理员 userid 未初始化，无法发送审批卡片")
+                # 卡片发送给审批人，而不是新用户
+                if not self.approver_userid:
+                    logger.error("审批人 userid 未初始化，无法发送审批卡片")
                     self._send_messages(sender_staff_id, open_conversation_id, is_group_message, 
-                                       "系统错误", "**系统错误**\n\n管理员信息未配置，无法发送审批卡片")
+                                       "系统错误", "**系统错误**\n\n审批人信息未配置，无法发送审批卡片")
                     return AckMessage.STATUS_OK, 'OK'
                 
                 card_sent = self.card_service.send_approval_card(
@@ -325,7 +341,7 @@ class ChatbotHandler(BaseChatbotHandler):
                     open_conversation_id=open_conversation_id,
                     is_group_message=is_group_message,
                     admin_name=self.admin_name,
-                    admin_user_id=self.admin_userid
+                    approver_user_id=self.approver_userid
                 )
                 if not card_sent:
                     logger.error("发送审批卡片失败，回退到直接创建用户")

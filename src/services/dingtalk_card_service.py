@@ -69,7 +69,7 @@ class DingTalkCardService:
         open_conversation_id: Optional[str],
         is_group_message: bool,
         admin_name: str,
-        admin_user_id: str
+        approver_user_id: str
     ) -> bool:
         """发送审批卡片
         
@@ -79,8 +79,8 @@ class DingTalkCardService:
             sender_staff_id: 发送者 ID
             open_conversation_id: 会话 ID
             is_group_message: 是否群消息
-            admin_name: 管理员姓名
-            admin_user_id: 管理员用户 ID（卡片接收者）
+            admin_name: 管理员姓名（申请人）
+            approver_user_id: 审批人用户 ID（卡片接收者）
             
         Returns:
             是否发送成功
@@ -144,14 +144,14 @@ class DingTalkCardService:
             out_track_id = f"user-create-{name}-{int(time.time())}"
             
             # 创建请求
-            # 卡片发送给管理员，而不是新用户
+            # 卡片发送给审批人，而不是新用户
             create_and_deliver_request = dingtalkcard__1__0_models.CreateAndDeliverRequest(
-                user_id=admin_user_id,
+                user_id=approver_user_id,
                 card_template_id=self.card_template_id,
                 out_track_id=out_track_id,
                 callback_type="STREAM",
                 card_data=card_data,
-                open_space_id=f"dtv1.card//im_robot.{admin_user_id}",
+                open_space_id=f"dtv1.card//im_robot.{approver_user_id}",
                 im_robot_open_deliver_model=im_robot_open_deliver_model,
                 im_robot_open_space_model=im_robot_open_space_model,
                 user_id_type=1,

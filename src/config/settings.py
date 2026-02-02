@@ -95,4 +95,13 @@ class Settings:
             return self.config.get('dingtalk', 'admin_name')
         except (configparser.NoSectionError, configparser.NoOptionError):
             return "蒋成博"  # 默认值
+    
+    @property
+    def approver_name(self) -> str:
+        """审批人姓名"""
+        try:
+            return self.config.get('dingtalk', 'approver_name')
+        except (configparser.NoSectionError, configparser.NoOptionError):
+            # 如果没有配置审批人，默认使用管理员作为审批人（向后兼容）
+            return self.admin_name
 

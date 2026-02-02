@@ -29,7 +29,9 @@ class CardCallbackHandler:
         message_service: DingTalkMessageService,
         card_service: DingTalkCardService,
         admin_name: str,
-        admin_userid: Optional[str]
+        admin_userid: Optional[str],
+        approver_name: str,
+        approver_userid: Optional[str]
     ):
         """初始化处理器
         
@@ -41,6 +43,8 @@ class CardCallbackHandler:
             card_service: 钉钉卡片服务
             admin_name: 管理员姓名
             admin_userid: 管理员用户 ID
+            approver_name: 审批人姓名
+            approver_userid: 审批人用户 ID
         """
         self.settings = settings
         self.synology_service = synology_service
@@ -49,34 +53,36 @@ class CardCallbackHandler:
         self.card_service = card_service
         self.admin_name = admin_name
         self.admin_userid = admin_userid
+        self.approver_name = approver_name
+        self.approver_userid = approver_userid
     
     def pre_start(self):
         """预启动方法，SDK 要求所有处理器必须实现此方法"""
         pass
     
     def _check_admin_permission(self, user_id: str) -> bool:
-        """检查用户是否有管理员权限
+        """检查用户是否有审批权限
         
         Args:
             user_id: 用户 ID
             
         Returns:
-            是否有管理员权限
+            是否有审批权限
         """
-        if not self.admin_userid:
-            logger.warning("管理员 userid 未初始化，拒绝所有请求")
+        if not self.approver_userid:
+            logger.warning("审批人 userid 未初始化，拒绝所有请求")
             return False
         
         if not user_id:
             return False
         
         # 比较 userid
-        if user_id == self.admin_userid:
+        if user_id == self.approver_userid:
             return True
         
         # 如果 userid 不匹配，尝试获取用户姓名进行二次验证
         user_name = self.user_service.get_user_name_by_id(user_id)
-        if user_name and user_name.strip() == self.admin_name.strip():
+        if user_name and user_name.strip() == self.approver_name.strip():
             return True
         
         return False
@@ -154,7 +160,7 @@ class CardCallbackHandler:
             open_conversation_id = card_info.get('open_conversation_id')
             is_group_message = card_info.get('is_group_message', False)
             
-            # 权限检查：只有管理员可以审批
+            # 权限检查：只有审批人可以审批
             if not self._check_admin_permission(operator_user_id):
                 operator_name = self.user_service.get_user_name_by_id(operator_user_id) if operator_user_id else "未知用户"
                 logger.warning(f"用户 {operator_name} ({operator_user_id}) 尝试审批，但无权限")
@@ -165,8 +171,8 @@ class CardCallbackHandler:
                     "**微爱基金会 · 共享盘系统**\n\n"
                     "---\n\n"
                     "**抱歉，您没有权限进行审批操作**\n\n"
-                    f"只有管理员 **{self.admin_name}** 可以审批账户创建请求。\n\n"
-                    "📧 如需审批，请联系管理员"
+                    f"只有审批人 **{self.approver_name}** 可以审批账户创建请求。\n\n"
+                    "📧 如需审批，请联系审批人"
                 )
                 if operator_user_id:
                     self.message_service.send_private_markdown(operator_user_id, None, "权限不足", permission_denied_msg)
@@ -174,7 +180,7 @@ class CardCallbackHandler:
                 return {"status": "FAIL", "message": "权限不足"}
             
             # 获取操作者姓名
-            operator_name = self.user_service.get_user_name_by_id(operator_user_id) if operator_user_id else self.admin_name
+            operator_name = self.user_service.get_user_name_by_id(operator_user_id) if operator_user_id else self.approver_name
             
             # 判断用户操作
             if user_action in ['approve', '同意', 'agree', 'confirm', 'accept', '通过']:
