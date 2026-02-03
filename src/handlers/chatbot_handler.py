@@ -209,6 +209,59 @@ class ChatbotHandler(BaseChatbotHandler):
         
         return None
     
+    def _parse_intent(self, content: str) -> Tuple[str, Optional[str]]:
+        """解析用户意图
+        
+        Args:
+            content: 消息内容
+            
+        Returns:
+            (intent, param) 元组
+            intent: 'create_user' | 'list_users' | 'unknown'
+            param: 对于 create_user 是姓名，对于 list_users 是 None
+        """
+        if not content:
+            return 'unknown', None
+        
+        # 清理内容：移除 @机器人标识和多余空格
+        cleaned = content.strip()
+        cleaned = re.sub(r'@[^\s@]+', '', cleaned).strip()
+        cleaned = re.sub(r'@.*$', '', cleaned).strip()
+        
+        if not cleaned:
+            return 'unknown', None
+        
+        # 转换为小写以便匹配（但保留原始内容用于提取姓名）
+        content_lower = cleaned.lower()
+        
+        # 检查是否是查看用户列表的意图
+        list_keywords = ['用户列表', '查看用户', '列出用户', '用户', 'list', 'users', 
+                        '用户列表', '所有用户', '用户清单', '用户目录']
+        for keyword in list_keywords:
+            if keyword in content_lower:
+                return 'list_users', None
+        
+        # 检查是否是创建用户的意图
+        create_keywords = ['创建', '添加', '新建', '开通', '建立', '新增']
+        for keyword in create_keywords:
+            if keyword in content_lower:
+                # 提取姓名：移除关键词后的内容
+                name = cleaned
+                for kw in create_keywords:
+                    name = name.replace(kw, '').strip()
+                # 如果还有内容，认为是姓名
+                if name:
+                    return 'create_user', name
+        
+        # 如果都不匹配，但内容不为空，默认尝试作为姓名（向后兼容）
+        # 这样可以保持原有的"直接输入姓名创建用户"的功能
+        if cleaned and len(cleaned) > 0:
+            # 简单判断：如果看起来像中文姓名（2-4个字符）或英文名，尝试作为姓名
+            if 2 <= len(cleaned) <= 10:
+                return 'create_user', cleaned
+        
+        return 'unknown', None
+    
     def _send_messages(
         self,
         sender_staff_id: Optional[str],
@@ -292,10 +345,10 @@ class ChatbotHandler(BaseChatbotHandler):
             # 获取发送者 ID 和会话 ID
             sender_staff_id, open_conversation_id = self._get_sender_info(incoming_message, callback.data)
             
-            # 权限检查：只有管理员可以创建用户
+            # 权限检查：只有管理员可以使用机器人功能
             if not self._check_admin_permission(sender_staff_id):
                 sender_name = self.user_service.get_user_name_by_id(sender_staff_id) if sender_staff_id else "未知用户"
-                logger.warning(f"用户 {sender_name} ({sender_staff_id}) 尝试创建用户，但无权限")
+                logger.warning(f"用户 {sender_name} ({sender_staff_id}) 尝试使用机器人，但无权限")
                 permission_denied_msg = MessageFormatter.format_permission_denied_message(self.admin_name)
                 self._send_messages(sender_staff_id, open_conversation_id, is_group_message, 
                                    "权限不足", permission_denied_msg)
@@ -303,54 +356,96 @@ class ChatbotHandler(BaseChatbotHandler):
             
             # 如果消息为空，直接返回
             if not raw_content:
+                help_content = (
+                    "**微爱基金会 · 共享盘系统**\n\n"
+                    "**可用功能：**\n\n"
+                    "1. **创建用户**：输入姓名或发送 `创建 姓名`\n"
+                    "   例如：`张三` 或 `创建 张三`\n\n"
+                    "2. **查看用户列表**：发送 `用户列表` 或 `查看用户`\n\n"
+                    "📧 如有疑问，请联系系统管理员"
+                )
                 self._send_messages(sender_staff_id, open_conversation_id, is_group_message, 
-                                   "输入提示", "**请输入您的姓名**\n\n格式：`姓名@机器人`")
+                                   "使用帮助", help_content)
                 return AckMessage.STATUS_OK, 'OK'
             
-            # 清理消息内容，提取姓名
-            name = self._extract_name(raw_content)
+            # 解析用户意图
+            intent, param = self._parse_intent(raw_content)
             
-            if not name:
-                reply_content = "**未识别到姓名**\n\n请按格式输入：`姓名@机器人`\n\n例如：`张三@机器人`"
-                self._send_messages(sender_staff_id, open_conversation_id, is_group_message, 
-                                   "格式错误", reply_content)
+            # 根据意图分发到不同的处理逻辑
+            if intent == 'list_users':
+                # 处理查看用户列表
+                self._handle_list_users(sender_staff_id, open_conversation_id, is_group_message)
                 return AckMessage.STATUS_OK, 'OK'
             
-            # 根据姓名查找对应的钉钉用户 ID
-            target_user_id = self.user_service.find_user_by_name(name)
-            if not target_user_id:
-                logger.warning(f"未找到姓名为 '{name}' 的钉钉用户")
-                error_content = MessageFormatter.format_user_not_found_message(name)
-                self._send_messages(sender_staff_id, open_conversation_id, is_group_message, 
-                                   "用户查找失败", error_content)
-                return AckMessage.STATUS_OK, 'OK'
-            
-            # 如果配置了卡片模板 ID，发送审批卡片；否则直接创建用户
-            if self.settings.dingtalk_card_template_id:
-                # 卡片发送给审批人，而不是新用户
-                if not self.approver_userid:
-                    logger.error("审批人 userid 未初始化，无法发送审批卡片")
+            elif intent == 'create_user':
+                # 处理创建用户
+                name = param
+                if not name:
+                    # 如果意图识别为创建用户但没有提取到姓名，尝试使用原有方法
+                    name = self._extract_name(raw_content)
+                
+                if not name:
+                    reply_content = (
+                        "**未识别到姓名**\n\n"
+                        "请按以下格式输入：\n"
+                        "- 直接输入姓名：`张三`\n"
+                        "- 或使用命令：`创建 张三`\n\n"
+                        "例如：`张三@机器人` 或 `创建 张三@机器人`"
+                    )
                     self._send_messages(sender_staff_id, open_conversation_id, is_group_message, 
-                                       "系统错误", "**系统错误**\n\n审批人信息未配置，无法发送审批卡片")
+                                       "格式错误", reply_content)
                     return AckMessage.STATUS_OK, 'OK'
                 
-                card_sent = self.card_service.send_approval_card(
-                    name=name,
-                    target_user_id=target_user_id,
-                    sender_staff_id=sender_staff_id,
-                    open_conversation_id=open_conversation_id,
-                    is_group_message=is_group_message,
-                    admin_name=self.admin_name,
-                    approver_user_id=self.approver_userid
-                )
-                if not card_sent:
-                    logger.error("发送审批卡片失败，回退到直接创建用户")
+                # 根据姓名查找对应的钉钉用户 ID
+                target_user_id = self.user_service.find_user_by_name(name)
+                if not target_user_id:
+                    logger.warning(f"未找到姓名为 '{name}' 的钉钉用户")
+                    error_content = MessageFormatter.format_user_not_found_message(name)
+                    self._send_messages(sender_staff_id, open_conversation_id, is_group_message, 
+                                       "用户查找失败", error_content)
+                    return AckMessage.STATUS_OK, 'OK'
+                
+                # 如果配置了卡片模板 ID，发送审批卡片；否则直接创建用户
+                if self.settings.dingtalk_card_template_id:
+                    # 卡片发送给审批人，而不是新用户
+                    if not self.approver_userid:
+                        logger.error("审批人 userid 未初始化，无法发送审批卡片")
+                        self._send_messages(sender_staff_id, open_conversation_id, is_group_message, 
+                                           "系统错误", "**系统错误**\n\n审批人信息未配置，无法发送审批卡片")
+                        return AckMessage.STATUS_OK, 'OK'
+                    
+                    card_sent = self.card_service.send_approval_card(
+                        name=name,
+                        target_user_id=target_user_id,
+                        sender_staff_id=sender_staff_id,
+                        open_conversation_id=open_conversation_id,
+                        is_group_message=is_group_message,
+                        admin_name=self.admin_name,
+                        approver_user_id=self.approver_userid
+                    )
+                    if not card_sent:
+                        logger.error("发送审批卡片失败，回退到直接创建用户")
+                        self._create_user_directly(name, target_user_id, open_conversation_id, is_group_message)
+                else:
+                    logger.warning("未配置卡片模板 ID，使用直接创建用户方式")
                     self._create_user_directly(name, target_user_id, open_conversation_id, is_group_message)
-            else:
-                logger.warning("未配置卡片模板 ID，使用直接创建用户方式")
-                self._create_user_directly(name, target_user_id, open_conversation_id, is_group_message)
+                
+                return AckMessage.STATUS_OK, 'OK'
             
-            return AckMessage.STATUS_OK, 'OK'
+            else:
+                # 未知意图，返回帮助信息
+                help_content = (
+                    "**微爱基金会 · 共享盘系统**\n\n"
+                    "**未识别到您的指令**\n\n"
+                    "**可用功能：**\n\n"
+                    "1. **创建用户**：输入姓名或发送 `创建 姓名`\n"
+                    "   例如：`张三` 或 `创建 张三`\n\n"
+                    "2. **查看用户列表**：发送 `用户列表` 或 `查看用户`\n\n"
+                    "📧 如有疑问，请联系系统管理员"
+                )
+                self._send_messages(sender_staff_id, open_conversation_id, is_group_message, 
+                                   "使用帮助", help_content)
+                return AckMessage.STATUS_OK, 'OK'
             
         except Exception as e:
             logger.error(f"处理消息时发生错误: {e}", exc_info=True)
@@ -363,6 +458,41 @@ class ChatbotHandler(BaseChatbotHandler):
             except Exception as reply_error:
                 logger.error(f"回复错误消息时也发生错误: {reply_error}", exc_info=True)
             return AckMessage.STATUS_OK, 'OK'
+    
+    def _handle_list_users(
+        self,
+        sender_staff_id: Optional[str],
+        open_conversation_id: Optional[str],
+        is_group_message: bool
+    ):
+        """处理查看用户列表请求
+        
+        Args:
+            sender_staff_id: 发送者 ID
+            open_conversation_id: 会话 ID
+            is_group_message: 是否群消息
+        """
+        try:
+            # 获取用户列表
+            ok, users, error_msg = self.synology_service.get_all_users()
+            
+            if not ok:
+                logger.error(f"获取用户列表失败: {error_msg}")
+                error_content = MessageFormatter.format_error_message(f"获取用户列表失败: {error_msg}")
+                self._send_messages(sender_staff_id, open_conversation_id, is_group_message,
+                                   "查询失败", error_content)
+                return
+            
+            # 格式化用户列表消息
+            list_content = MessageFormatter.format_user_list_message(users)
+            self._send_messages(sender_staff_id, open_conversation_id, is_group_message,
+                               "群晖用户列表", list_content)
+            
+        except Exception as e:
+            logger.error(f"处理用户列表查询时发生错误: {e}", exc_info=True)
+            error_content = MessageFormatter.format_error_message(f"查询用户列表时发生错误: {str(e)}")
+            self._send_messages(sender_staff_id, open_conversation_id, is_group_message,
+                               "系统错误", error_content)
     
     def _create_user_directly(
         self,

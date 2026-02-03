@@ -4,6 +4,7 @@
 消息格式化工具
 用于生成各种钉钉 Markdown 消息
 """
+from typing import List, Dict
 
 
 class MessageFormatter:
@@ -206,6 +207,53 @@ class MessageFormatter:
             "---\n\n"
             "**您的账户创建请求已被拒绝**\n\n"
             f"**姓名**：{name}\n\n"
+            "📧 如有疑问，请联系系统管理员"
+        )
+    
+    @staticmethod
+    def format_user_list_message(users: List[Dict[str, str]]) -> str:
+        """格式化用户列表消息
+        
+        Args:
+            users: 用户列表，每个用户包含 username 和 description 字段
+            
+        Returns:
+            Markdown 格式的用户列表消息
+        """
+        if not users:
+            return (
+                "### 📋 群晖用户列表\n\n"
+                "**微爱基金会 · 共享盘系统**\n\n"
+                "---\n\n"
+                "**用户总数**：0 人\n\n"
+                "---\n\n"
+                "**当前没有用户**\n\n"
+                "📧 如有疑问，请联系系统管理员"
+            )
+        
+        # 构建用户列表内容
+        user_lines = []
+        for user in users:
+            username = user.get('username', '')
+            description = user.get('description', '').strip()
+            
+            if description:
+                user_lines.append(f"**{username}** - {description}")
+            else:
+                user_lines.append(f"**{username}**")
+        
+        # 确保每个用户单独一行，使用双换行符确保 Markdown 正确渲染
+        user_list_content = "\n\n".join(user_lines)
+        
+        return (
+            "### 📋 群晖用户列表\n\n"
+            "**微爱基金会 · 共享盘系统**\n\n"
+            "---\n\n"
+            f"**用户总数**：{len(users)} 人\n\n"
+            "---\n\n"
+            "**用户列表**：\n\n"
+            f"{user_list_content}\n\n"
+            "---\n\n"
             "📧 如有疑问，请联系系统管理员"
         )
 

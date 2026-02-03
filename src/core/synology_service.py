@@ -7,7 +7,7 @@ Synology 用户管理服务
 import logging
 import shlex
 import paramiko
-from typing import Tuple
+from typing import Tuple, List, Dict
 
 from ..config import Settings
 from ..utils import NameUtils, PasswordGenerator
@@ -155,4 +155,75 @@ class SynologyService:
             return True, username, password, ""
         else:
             return False, "", "", error_msg
+    
+    def get_all_users(self) -> Tuple[bool, List[Dict[str, str]], str]:
+        """获取所有用户列表（只返回用户名和描述）
+        
+        Returns:
+            (成功标志, 用户列表, 错误信息) 元组
+            用户列表格式: [{"username": "...", "description": "..."}, ...]
+        """
+        # 使用 cat /etc/passwd 获取所有用户信息（Synology 兼容）
+        # 格式: username:x:uid:gid:description:home:shell
+        cmd = "cat /etc/passwd"
+        out, err, exit_status = self._ssh_exec(cmd)
+        
+        if err or exit_status != 0:
+            logger.error(f"查询所有用户失败: stdout={out}, stderr={err}, exit_status={exit_status}")
+            error_msg = err if err else (out if out else f"命令执行失败，退出码: {exit_status}")
+            return False, [], f"查询失败: {error_msg}"
+        
+        # 解析输出
+        users = []
+        lines = out.split('\n')
+        
+        # 系统用户过滤列表（可选，根据需要调整）
+        system_users = {'root', 'daemon', 'bin', 'sys', 'sync', 'games', 
+                       'man', 'mail', 'www-data', 'backup', 'list', 'irc', 'nobody',
+                       'systemd-network', 'systemd-resolve', 'messagebus', 'sshd',
+                       'lp', 'news', 'uucp', 'proxy', 'www', 'ftp', 'guest'}
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # 跳过注释行
+            if line.startswith('#'):
+                continue
+            
+            # 解析 passwd 格式: username:x:uid:gid:description:home:shell
+            parts = line.split(':')
+            if len(parts) >= 5:
+                username = parts[0].strip()
+                description = parts[4].strip() if parts[4] else ""
+                
+                # 过滤系统用户（但保留 admin，因为可能是管理员账户）
+                if username in system_users:
+                    continue
+                
+                # 过滤 UID < 1000 的系统用户（通常系统用户的 UID 小于 1000）
+                try:
+                    uid = int(parts[2]) if len(parts) > 2 else 0
+                    if uid < 1000 and username != 'admin':
+                        continue
+                except (ValueError, IndexError):
+                    pass
+                
+                # 只返回有描述的用户（描述是姓名的用户）
+                # 过滤掉没有描述或描述为空的用户
+                if not description or description.strip() == "":
+                    continue
+                
+                # 只返回用户名和描述
+                users.append({
+                    "username": username,
+                    "description": description
+                })
+        
+        # 按用户名排序
+        users.sort(key=lambda x: x['username'])
+        
+        logger.info(f"成功获取用户列表，共 {len(users)} 个用户")
+        return True, users, ""
 
