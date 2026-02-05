@@ -9,6 +9,8 @@ client_id = your_client_id_here
 client_secret = your_client_secret_here
 # 钉钉交互卡片模板ID（在卡片平台创建后获取，可选）
 card_template_id = your_card_template_id_here
-# 管理员姓名（拥有创建用户和审批权限的管理员）
+# 管理员姓名（拥有创建用户权限的管理员）
 admin_name = 管理员姓名
+# 审批人姓名（拥有审批权限的审批人，如果不配置则默认使用管理员作为审批人）
+approver_name = 审批人姓名
 

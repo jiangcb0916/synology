@@ -68,17 +68,19 @@ class DingTalkCardService:
         sender_staff_id: str,
         open_conversation_id: Optional[str],
         is_group_message: bool,
-        admin_name: str
+        admin_name: str,
+        approver_user_id: str
     ) -> bool:
         """发送审批卡片
         
         Args:
-            name: 用户姓名
-            target_user_id: 目标用户 ID
+            name: 用户姓名（要创建的新用户）
+            target_user_id: 目标用户 ID（要创建的新用户 ID）
             sender_staff_id: 发送者 ID
             open_conversation_id: 会话 ID
             is_group_message: 是否群消息
-            admin_name: 管理员姓名
+            admin_name: 管理员姓名（申请人）
+            approver_user_id: 审批人用户 ID（卡片接收者）
             
         Returns:
             是否发送成功
@@ -142,13 +144,14 @@ class DingTalkCardService:
             out_track_id = f"user-create-{name}-{int(time.time())}"
             
             # 创建请求
+            # 卡片发送给审批人，而不是新用户
             create_and_deliver_request = dingtalkcard__1__0_models.CreateAndDeliverRequest(
-                user_id=target_user_id,
+                user_id=approver_user_id,
                 card_template_id=self.card_template_id,
                 out_track_id=out_track_id,
                 callback_type="STREAM",
                 card_data=card_data,
-                open_space_id=f"dtv1.card//im_robot.{target_user_id}",
+                open_space_id=f"dtv1.card//im_robot.{approver_user_id}",
                 im_robot_open_deliver_model=im_robot_open_deliver_model,
                 im_robot_open_space_model=im_robot_open_space_model,
                 user_id_type=1,
@@ -249,4 +252,147 @@ class DingTalkCardService:
         """
         if out_track_id in self.pending_cards:
             del self.pending_cards[out_track_id]
+    
+    def update_card_status(
+        self,
+        out_track_id: str,
+        status: str,
+        operator_name: Optional[str] = None
+    ) -> bool:
+        """更新卡片状态
+        
+        Args:
+            out_track_id: 卡片追踪 ID
+            status: 状态（"已同意" 或 "已拒绝"）
+            operator_name: 操作者姓名（可选）
+            
+        Returns:
+            是否更新成功
+        """
+        if not self.card_template_id:
+            logger.error("未配置卡片模板 ID，无法更新卡片")
+            return False
+        
+        access_token = self.api_service.get_access_token()
+        if not access_token:
+            logger.error("无法获取 access_token，无法更新卡片")
+            return False
+        
+        # 获取卡片信息
+        card_info = self.pending_cards.get(out_track_id)
+        if not card_info:
+            logger.warning(f"未找到卡片信息: {out_track_id}")
+            return False
+        
+        name = card_info.get('name')
+        target_user_id = card_info.get('target_user_id')
+        create_time = card_info.get('create_time', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        
+        try:
+            client = self._create_card_client()
+            
+            # 创建请求头
+            headers = dingtalkcard__1__0_models.UpdateCardHeaders()
+            headers.x_acs_dingtalk_access_token = access_token
+            
+            # 创建卡片数据
+            card_data_map = {
+                "lastMessage": f"账户创建审批：{name}",
+                "title": f"{name} 的账户创建审批",
+                "name": name,
+                "createTime": create_time,
+                "status": status,
+            }
+            
+            if operator_name:
+                card_data_map["operator"] = operator_name
+            
+            # 记录要更新的数据
+            logger.info(f"准备更新卡片数据: {out_track_id}, 数据: {card_data_map}")
+            
+            card_data = dingtalkcard__1__0_models.UpdateCardRequestCardData(
+                card_param_map=convert_json_values_to_string(card_data_map)
+            )
+            
+            # 创建卡片更新选项，设置按key更新卡片数据
+            card_update_options = dingtalkcard__1__0_models.UpdateCardRequestCardUpdateOptions(
+                update_card_data_by_key=True,
+                update_private_data_by_key=False
+            )
+            
+            # 创建请求
+            update_request = dingtalkcard__1__0_models.UpdateCardRequest(
+                out_track_id=out_track_id,
+                card_data=card_data,
+                card_update_options=card_update_options,
+                user_id_type=1,  # 1表示使用unionId，与创建卡片时保持一致
+            )
+            
+            # 异步更新卡片
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(
+                            asyncio.run,
+                            self._update_card_async(client, update_request, headers)
+                        )
+                        result = future.result(timeout=10)
+                else:
+                    result = asyncio.run(self._update_card_async(client, update_request, headers))
+            except RuntimeError:
+                result = asyncio.run(self._update_card_async(client, update_request, headers))
+            
+            if result:
+                logger.info(f"成功更新卡片状态: {out_track_id}, 状态: {status}")
+            else:
+                logger.error(f"更新卡片状态失败: {out_track_id}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"更新卡片状态时发生错误: {e}", exc_info=True)
+            return False
+    
+    async def _update_card_async(
+        self,
+        client: dingtalkcard_1_0Client,
+        request: dingtalkcard__1__0_models.UpdateCardRequest,
+        headers: dingtalkcard__1__0_models.UpdateCardHeaders
+    ) -> bool:
+        """异步更新卡片
+        
+        Args:
+            client: 卡片客户端
+            request: 请求对象
+            headers: 请求头
+            
+        Returns:
+            是否更新成功
+        """
+        try:
+            response = await client.update_card_with_options_async(
+                request,
+                headers,
+                util_models.RuntimeOptions(),
+            )
+            # 检查响应是否成功
+            if hasattr(response, 'body') and hasattr(response.body, 'success'):
+                if response.body.success:
+                    logger.info(f"卡片更新API调用成功: {request.out_track_id}")
+                    return True
+                else:
+                    logger.error(f"卡片更新API返回失败: {request.out_track_id}, 响应: {response.body}")
+                    return False
+            # 如果没有success字段，假设成功
+            logger.info(f"卡片更新API调用完成: {request.out_track_id}")
+            return True
+        except Exception as err:
+            logger.error(f"卡片更新 API 调用失败: {err}", exc_info=True)
+            if hasattr(err, 'code') and hasattr(err, 'message'):
+                logger.error(f"错误代码: {err.code}, 错误消息: {err.message}")
+            elif hasattr(err, 'data'):
+                logger.error(f"错误数据: {err.data}")
+            return False
 
