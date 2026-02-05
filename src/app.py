@@ -55,14 +55,18 @@ def setup_logging():
         log_file,
         when='midnight',  # 每天午夜轮转
         interval=1,  # 间隔1天
-        backupCount=30,  # 保留30天的日志文件
+        backupCount=30,  # 保留30个备份文件（由于每天轮转一次，即保留30天的日志）
         encoding='utf-8',
         utc=False  # 使用本地时间
     )
     file_handler.setLevel(logging.INFO)
     file_formatter = logging.Formatter(log_format, date_format)
     file_handler.setFormatter(file_formatter)
-    # 设置后缀格式为日期
+    # 设置后缀格式为日期（例如：app.log.2024-01-15）
+    # TimedRotatingFileHandler 会在每次轮转时：
+    # 1. 将当前的 app.log 重命名为 app.log.2024-01-15（带日期后缀）
+    # 2. 创建新的 app.log 文件继续写入
+    # 3. 自动删除超过 backupCount 数量的旧备份文件（保留最新的30个）
     file_handler.suffix = '%Y-%m-%d'
     root_logger.addHandler(file_handler)
     
