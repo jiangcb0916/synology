@@ -5,6 +5,8 @@
 钉钉机器人应用主入口
 """
 import logging
+import logging.handlers
+import os
 import sys
 
 from dingtalk_stream import DingTalkStreamClient, Credential
@@ -22,14 +24,54 @@ from .services import (
 from .handlers import ChatbotHandler, CardCallbackHandler
 
 # 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+def setup_logging():
+    """配置日志系统，同时输出到控制台和文件（按天分割）"""
+    # 创建 logs 目录（如果不存在）
+    log_dir = 'logs'
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    
+    # 日志格式
+    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    date_format = '%Y-%m-%d %H:%M:%S'
+    
+    # 配置根日志记录器
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    
+    # 清除已有的处理器
+    root_logger.handlers.clear()
+    
+    # 控制台处理器
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_formatter = logging.Formatter(log_format, date_format)
+    console_handler.setFormatter(console_formatter)
+    root_logger.addHandler(console_handler)
+    
+    # 文件处理器（按天分割日志）
+    log_file = os.path.join(log_dir, 'app.log')
+    file_handler = logging.handlers.TimedRotatingFileHandler(
+        log_file,
+        when='midnight',  # 每天午夜轮转
+        interval=1,  # 间隔1天
+        backupCount=30,  # 保留30天的日志文件
+        encoding='utf-8',
+        utc=False  # 使用本地时间
+    )
+    file_handler.setLevel(logging.INFO)
+    file_formatter = logging.Formatter(log_format, date_format)
+    file_handler.setFormatter(file_formatter)
+    # 设置后缀格式为日期
+    file_handler.suffix = '%Y-%m-%d'
+    root_logger.addHandler(file_handler)
+    
+    # 设置 dingtalk-stream 的日志级别为 WARNING，减少无用日志
+    logging.getLogger('dingtalk_stream').setLevel(logging.WARNING)
 
-# 设置 dingtalk-stream 的日志级别为 WARNING，减少无用日志
-logging.getLogger('dingtalk_stream').setLevel(logging.WARNING)
+# 初始化日志
+setup_logging()
+logger = logging.getLogger(__name__)
 
 
 class DingTalkBotApp:
